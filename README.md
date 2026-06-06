@@ -2,7 +2,7 @@
 
 Windows 11 system tray app that tracks your [Claude.ai](https://claude.ai) usage quota in real time.
 
-![Claude Monitor tray icon](icon_preview_13.png)
+![Claude Monitor detail window](screenshot.png)
 
 ## Features
 
