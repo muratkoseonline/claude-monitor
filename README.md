@@ -22,7 +22,7 @@ Windows 11 system tray app that tracks your [Claude.ai](https://claude.ai) usage
 ## Installation
 
 ```bat
-git clone https://github.com/murat-kose/claude-monitor.git
+git clone https://github.com/muratkoseonline/claude-monitor.git
 cd claude-monitor
 setup.bat
 ```
