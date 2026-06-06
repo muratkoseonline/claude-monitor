@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Config (contains session key - never commit)
+~/.claude-monitor/
+
+# Preview images (generated at runtime)
+icon_preview_*.png
+
+# Windows
+Thumbs.db
+desktop.ini

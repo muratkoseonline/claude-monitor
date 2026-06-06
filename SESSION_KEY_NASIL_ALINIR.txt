@@ -1,0 +1,26 @@
+SESSION KEY NASIL ALINIR
+========================
+
+1. Tarayıcıda claude.ai'ya giriş yap
+
+2. F12 → Developer Tools aç
+
+3. "Application" sekmesine tıkla
+
+4. Sol panelde: Storage > Cookies > https://claude.ai
+
+5. Listede "sessionKey" adlı cookie'yi bul
+
+6. Value sütunundaki uzun metni kopyala (sk-ant-... ile başlar)
+
+7. Claude Monitor'de: Sağ tık → Ayarlar → Session Key kutusuna yapıştır → Kaydet
+
+
+NOT: Session key birkaç haftada bir yenilenir. API yanıt vermezse
+tekrar bu adımları izleyerek yeni key al.
+
+LOG DOSYASI
+===========
+C:\Users\{kullanıcı}\.claude-monitor\monitor.log
+
+API yanıtı tanınmıyorsa log'a bak - ham JSON görürsün.
