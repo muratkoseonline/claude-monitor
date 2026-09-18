@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Claude Usage Monitor v1.2
-Windows 11 System Tray - 5-hour quota tracker
+Claude Usage Monitor v1.3
+Windows 11 System Tray - Claude + Codex (ChatGPT) quota tracker
 """
 
 import sys
@@ -24,6 +24,7 @@ except ImportError:
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 from generate_icon import make_tray_icon, generate_ico
+from codex_usage import CodexUsage, DEFAULT_AUTH_PATH as CODEX_AUTH_DEFAULT
 
 ICON_FILE = os.path.join(_HERE, "icon.ico")
 # İlk çalıştırmada .ico yoksa üret
@@ -43,6 +44,8 @@ DEFAULT_CONFIG = {
     "org_uuid": "",            # auto-discovered from /api/organizations
     "notify_threshold": 75,
     "poll_interval": 120,      # seconds
+    "codex_enabled": True,     # Codex (ChatGPT) kotasını da izle
+    "codex_auth_path": "",     # boş = ~/.codex/auth.json
 }
 
 ICON_SIZE = 64
@@ -59,6 +62,15 @@ class ClaudeMonitor:
         self.running = True
         self.last_error = None
         self.last_updated = None
+        # Codex
+        self.codex = CodexUsage(self._codex_auth_path(), log=self._log)
+        self.codex_data = {}
+        self.codex_error = None
+        self.codex_notified = False
+        self.codex_updated = None
+
+    def _codex_auth_path(self):
+        return (self.config.get("codex_auth_path") or "").strip() or CODEX_AUTH_DEFAULT
 
     # ── Config ─────────────────────────────────────────────────────────────────
 
@@ -198,43 +210,48 @@ class ClaudeMonitor:
     # ── Icon ───────────────────────────────────────────────────────────────────
 
     def create_icon_image(self, percent, error=False, no_key=False):
-        return make_tray_icon(ICON_SIZE, percent, error=error, no_key=no_key)
+        codex_pct = None
+        if self.config.get("codex_enabled") and self.codex_data:
+            codex_pct = self.codex_data.get("five_hour_pct", 0)
+        return make_tray_icon(ICON_SIZE, percent, error=error, no_key=no_key,
+                              codex_percent=codex_pct)
 
     # ── Tooltip ────────────────────────────────────────────────────────────────
 
     def build_tooltip(self):
+        """Windows tepsi ipucu en fazla 128 karakter; kompakt tut."""
+        lines = ["Claude Monitor"]
         if not self.config.get("session_key") and not self.config.get("cookie_string"):
-            return "Claude Monitor\nSession key yok - Sag tik > Ayarlar"
-
-        if not self.usage_data:
-            if self.last_error:
-                return f"Claude Monitor\nHata: {self.last_error}"
-            return "Claude Monitor\nYukleniyor..."
-
-        d = self.usage_data
-        fh = d.get("five_hour_pct", 0)
-        sd = d.get("seven_day_pct", 0)
-        reset = d.get("five_hour_reset", "") or ""
+            lines.append("Claude: key yok (Ayarlar)")
+        elif not self.usage_data:
+            lines.append("Claude: HATA" if self.last_error else "Claude: yukleniyor")
+        else:
+            d = self.usage_data
+            lines.append(f"Claude 5s %{d.get('five_hour_pct', 0)} | 7g %{d.get('seven_day_pct', 0)}"
+                         + self._reset_suffix(d.get("five_hour_reset")))
+        lines.extend(self._codex_tooltip_lines())
         updated = self.last_updated.strftime("%H:%M") if self.last_updated else "--:--"
+        lines.append(f"Guncelleme {updated}")
+        return "\n".join(lines)[:127]
 
-        bar = self._bar(fh)
-        lines = [
-            "Claude Kullanim Monitoru",
-            f"{bar} %{fh}",
-            f"5 Saatlik: %{fh}",
-            f"7 Gunluk : %{sd}",
-        ]
-        if reset:
-            # ISO → saat:dakika
-            try:
-                from datetime import timezone
-                dt = datetime.fromisoformat(reset.replace("Z", "+00:00"))
-                local = dt.astimezone().strftime("%H:%M")
-                lines.append(f"Sifirlama: {local}")
-            except:
-                lines.append(f"Sifirlama: {reset[:16]}")
-        lines.append(f"Guncelleme: {updated}")
-        return "\n".join(lines)
+    @staticmethod
+    def _reset_suffix(iso):
+        if not iso:
+            return ""
+        try:
+            dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+            return f" ({dt.astimezone().strftime('%H:%M')})"
+        except Exception:
+            return ""
+
+    def _codex_tooltip_lines(self):
+        if not self.config.get("codex_enabled"):
+            return []
+        if not self.codex_data:
+            return ["Codex: HATA" if self.codex_error else "Codex: yukleniyor"]
+        c = self.codex_data
+        return [f"Codex  5s %{c.get('five_hour_pct', 0)} | hf %{c.get('seven_day_pct', 0)}"
+                + self._reset_suffix(c.get("five_hour_reset"))]
 
     @staticmethod
     def _bar(percent, width=12):
@@ -275,6 +292,7 @@ class ClaudeMonitor:
                 time.sleep(1)
 
     def _do_refresh(self):
+        self._refresh_codex()
         has_key = bool(self.config.get("session_key") or self.config.get("cookie_string"))
         if not has_key:
             self.last_error = None
@@ -307,6 +325,41 @@ class ClaudeMonitor:
         else:
             self._update_icon(error=True)
 
+    def _refresh_codex(self):
+        if not self.config.get("codex_enabled"):
+            self.codex_data = {}
+            self.codex_error = None
+            return
+        self.codex.auth_path = self._codex_auth_path()
+        raw = self.codex.fetch()
+        err = (raw or {}).get("_error")
+        if err == "no_auth":
+            self.codex_error = "Codex girişi yok (auth.json bulunamadı) - 'codex login' çalıştırın"
+        elif err == "auth":
+            self.codex_error = "Codex oturumu geçersiz - 'codex login' ile yeniden girin"
+        elif err == "no_response":
+            self.codex_error = "Codex API erişilemiyor"
+        else:
+            self.codex_error = None
+
+        parsed = CodexUsage.parse(raw)
+        if not parsed:
+            return
+        self.codex_data = parsed
+        self.codex_updated = datetime.now()
+
+        threshold = self.config.get("notify_threshold", 75)
+        pct = parsed["five_hour_pct"]
+        if pct >= threshold and not self.codex_notified:
+            self.codex_notified = True
+            self.send_notification(
+                "⚠️ Codex Limit Uyarisi",
+                f"Codex 5 saatlik kota %{threshold} sinirini gecti!\n"
+                f"Kullanim: %{pct}  |  Haftalik: %{parsed['seven_day_pct']}",
+            )
+        elif pct < threshold:
+            self.codex_notified = False
+
     def _update_icon(self, error=False, no_key=False):
         if not self.icon:
             return
@@ -327,7 +380,7 @@ class ClaudeMonitor:
 
         root = tk.Tk()
         root.title("Claude Monitor - Ayarlar")
-        root.geometry("520x400")
+        root.geometry("520x520")
         root.resizable(False, False)
         root.configure(bg="#1e1e2e")
         if ICON_FILE:
@@ -413,6 +466,20 @@ class ClaudeMonitor:
         )
         thr_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+        # Codex
+        tk.Frame(frame, bg=BG2, height=1).pack(fill=tk.X, pady=8)
+        codex_var = tk.BooleanVar(value=bool(self.config.get("codex_enabled", True)))
+        tk.Checkbutton(
+            frame, text="Codex (ChatGPT) kotasını da izle", variable=codex_var,
+            bg=BG, fg=FG, selectcolor=BG2, activebackground=BG, activeforeground=FG,
+            font=("Segoe UI", 10), cursor="hand2"
+        ).pack(anchor="w")
+        label(frame, "Codex CLI / uygulaması ile giriş yapılmış olmalı. Token ~/.codex/auth.json'dan okunur.",
+              size=8, color=FG2)
+        label(frame, "auth.json yolu (boş = varsayılan):", size=9)
+        cx_var = tk.StringVar(value=self.config.get("codex_auth_path", ""))
+        entry_field(frame, cx_var)
+
         # Buttons
         tk.Frame(frame, bg=BG2, height=1).pack(fill=tk.X, pady=8)
         btn_frame = tk.Frame(frame, bg=BG)
@@ -422,8 +489,11 @@ class ClaudeMonitor:
             self.config["session_key"] = sk_var.get().strip()
             self.config["cookie_string"] = ck_var.get().strip()
             self.config["notify_threshold"] = thr_var.get()
+            self.config["codex_enabled"] = bool(codex_var.get())
+            self.config["codex_auth_path"] = cx_var.get().strip()
             self._save_config()
             self.notified = False
+            self.codex_notified = False
             threading.Thread(target=self._do_refresh, daemon=True).start()
             messagebox.showinfo("Kaydedildi", "Ayarlar kaydedildi!\nVeriler güncelleniyor...", parent=root)
             root.destroy()
@@ -453,7 +523,7 @@ class ClaudeMonitor:
 
         root = tk.Tk()
         root.title("Claude Monitor - Kullanım Detayları")
-        root.geometry("420x400")
+        root.geometry("420x720")
         root.resizable(False, False)
         root.configure(bg=BG)
         root.lift()
@@ -469,7 +539,7 @@ class ClaudeMonitor:
         header.pack(fill=tk.X)
 
         tk.Label(
-            header, text="Claude Kullanım Detayları",
+            header, text="Kullanım Detayları",
             bg=BG, fg=ACC, font=("Segoe UI", 14, "bold")
         ).pack(side=tk.LEFT)
 
@@ -490,9 +560,70 @@ class ClaudeMonitor:
         content_holder = tk.Frame(root, bg=BG)
         content_holder.pack(fill=tk.BOTH, expand=True, padx=24, pady=8)
 
+        def make_bar(parent, pct, label):
+            tk.Label(parent, text=label, bg=BG, fg=FG2,
+                     font=("Segoe UI", 9)).pack(anchor="w", pady=(6, 1))
+            c = tk.Canvas(parent, bg=BG2, height=28, highlightthickness=0)
+            c.pack(fill=tk.X)
+            def draw(event=None, p=pct, cv=c):
+                cv.delete("all")
+                w = cv.winfo_width() or 360
+                h = 28
+                fw = max(0, int(w * p / 100))
+                color = "#a6e3a1" if p < 50 else ("#fab387" if p < 75 else "#f38ba8")
+                cv.create_rectangle(0, 0, w, h, fill=BG2, outline="")
+                if fw > 0:
+                    cv.create_rectangle(0, 0, fw, h, fill=color, outline="")
+                cv.create_text(w // 2, h // 2, text=f"%{p}",
+                               fill="#1e1e2e" if fw > w // 2 else FG,
+                               font=("Segoe UI", 11, "bold"))
+            c.bind("<Configure>", draw)
+            root.after(60, draw)
+
+
+        def section_title(parent, text):
+            tk.Label(parent, text=text, bg=BG, fg=ACC,
+                     font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(10, 0))
+
+        def render_rows(parent, rows):
+            tk.Frame(parent, bg=BG2, height=1).pack(fill=tk.X, pady=8)
+            for lbl, val in rows:
+                row = tk.Frame(parent, bg=BG)
+                row.pack(fill=tk.X, pady=2)
+                tk.Label(row, text=f"{lbl}:", bg=BG, fg=FG2,
+                         font=("Segoe UI", 10), width=20, anchor="w").pack(side=tk.LEFT)
+                tk.Label(row, text=val, bg=BG, fg=FG,
+                         font=("Segoe UI", 10, "bold"), anchor="w").pack(side=tk.LEFT)
+
+        def render_codex():
+            if not self.config.get("codex_enabled"):
+                return
+            section_title(content_holder, "Codex (ChatGPT)")
+            c = self.codex_data
+            if not c:
+                msg = "Veri bulunamadı."
+                if self.codex_error:
+                    msg += f"\n{self.codex_error}"
+                tk.Label(content_holder, text=msg, bg=BG, fg="#f38ba8",
+                         font=("Segoe UI", 10), justify="left").pack(anchor="w", pady=6)
+                return
+            make_bar(content_holder, c.get("five_hour_pct", 0), "5 Saatlik Pencere")
+            make_bar(content_holder, c.get("seven_day_pct", 0), "Haftalık Pencere")
+            rows = [
+                ("5 Saat Sıfırlanma", fmt_reset(c.get("five_hour_reset"))),
+                ("Hafta Sıfırlanma",  fmt_reset(c.get("seven_day_reset"))),
+                ("Plan",              (c.get("plan_type") or "—").upper()),
+                ("Son Güncelleme",    self.codex_updated.strftime("%H:%M:%S") if self.codex_updated else "—"),
+            ]
+            if c.get("limit_reached"):
+                rows.insert(0, ("Durum", "LİMİT DOLDU"))
+            render_rows(content_holder, rows)
+
         def render_content():
             for w in content_holder.winfo_children():
                 w.destroy()
+
+            section_title(content_holder, "Claude")
 
             if not self.usage_data:
                 msg = "Veri bulunamadı."
@@ -502,31 +633,12 @@ class ClaudeMonitor:
                     msg += f"\nHata: {self.last_error}"
                 tk.Label(content_holder, text=msg, bg=BG, fg="#f38ba8",
                          font=("Segoe UI", 11), justify="left").pack(anchor="w", pady=10)
+                render_codex()
                 return
 
             d = self.usage_data
             fh_pct = d.get("five_hour_pct", 0)
             sd_pct = d.get("seven_day_pct", 0)
-
-            def make_bar(parent, pct, label):
-                tk.Label(parent, text=label, bg=BG, fg=FG2,
-                         font=("Segoe UI", 9)).pack(anchor="w", pady=(6, 1))
-                c = tk.Canvas(parent, bg=BG2, height=28, highlightthickness=0)
-                c.pack(fill=tk.X)
-                def draw(event=None, p=pct, cv=c):
-                    cv.delete("all")
-                    w = cv.winfo_width() or 360
-                    h = 28
-                    fw = max(0, int(w * p / 100))
-                    color = "#a6e3a1" if p < 50 else ("#fab387" if p < 75 else "#f38ba8")
-                    cv.create_rectangle(0, 0, w, h, fill=BG2, outline="")
-                    if fw > 0:
-                        cv.create_rectangle(0, 0, fw, h, fill=color, outline="")
-                    cv.create_text(w // 2, h // 2, text=f"%{p}",
-                                   fill="#1e1e2e" if fw > w // 2 else FG,
-                                   font=("Segoe UI", 11, "bold"))
-                c.bind("<Configure>", draw)
-                root.after(60, draw)
 
             make_bar(content_holder, fh_pct, "5 Saatlik Pencere")
             make_bar(content_holder, sd_pct, "7 Günlük Pencere")
@@ -542,14 +654,8 @@ class ClaudeMonitor:
                     lbl = key.replace("seven_day_", "7G ").title()
                     rows.insert(2, (lbl, f"%{d[key]}"))
 
-            tk.Frame(content_holder, bg=BG2, height=1).pack(fill=tk.X, pady=8)
-            for lbl, val in rows:
-                row = tk.Frame(content_holder, bg=BG)
-                row.pack(fill=tk.X, pady=2)
-                tk.Label(row, text=f"{lbl}:", bg=BG, fg=FG2,
-                         font=("Segoe UI", 10), width=20, anchor="w").pack(side=tk.LEFT)
-                tk.Label(row, text=val, bg=BG, fg=FG,
-                         font=("Segoe UI", 10, "bold"), anchor="w").pack(side=tk.LEFT)
+            render_rows(content_holder, rows)
+            render_codex()
 
             if self.last_updated:
                 status_lbl.config(text=f"Son: {self.last_updated.strftime('%H:%M:%S')}")

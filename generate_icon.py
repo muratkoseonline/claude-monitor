@@ -62,8 +62,18 @@ def make_base_icon(size: int) -> Image.Image:
     return img
 
 
-def make_tray_icon(size: int, percent: int, error: bool = False, no_key: bool = False) -> Image.Image:
-    """Tepsi için — base + yüzde metni + kullanım yayı."""
+def _arc_color(percent: int):
+    if percent < 50:
+        return (100, 220, 120, 220)
+    if percent < 75:
+        return (255, 170, 50, 220)
+    return (240, 70, 70, 220)
+
+
+def make_tray_icon(size: int, percent: int, error: bool = False, no_key: bool = False,
+                   codex_percent=None) -> Image.Image:
+    """Tepsi için — base + yüzde metni + kullanım yayı.
+    codex_percent verilirse dış yay Claude, hemen içindeki ince yay Codex olur."""
     img  = Image.new("RGBA", (size, size), TRANSPARENT)
     draw = ImageDraw.Draw(img)
 
@@ -82,22 +92,26 @@ def make_tray_icon(size: int, percent: int, error: bool = False, no_key: bool = 
     else:
         draw_base(draw, size)
 
-        # Kullanım yayı (dış kenar üstüne)
+        # Kullanım yayı (dış kenar üstüne) — Claude
+        arc_pad = max(1, size // 16)
+        arc_w   = max(2, size // 10)
         if percent > 0:
-            arc_pad = max(1, size // 16)
-            arc_w   = max(2, size // 10)
-            angle   = int(360 * percent / 100)
-            if percent < 50:
-                arc_col = (100, 220, 120, 220)
-            elif percent < 75:
-                arc_col = (255, 170, 50, 220)
-            else:
-                arc_col = (240, 70, 70, 220)
             draw.arc(
                 [arc_pad, arc_pad, size - arc_pad - 1, size - arc_pad - 1],
-                start=-90, end=-90 + angle,
-                fill=arc_col,
+                start=-90, end=-90 + int(360 * percent / 100),
+                fill=_arc_color(percent),
                 width=arc_w,
+            )
+
+        # İç yay — Codex (daha ince, hemen içeride)
+        if codex_percent is not None and codex_percent > 0:
+            in_pad = arc_pad + arc_w + max(1, size // 32)
+            in_w   = max(1, size // 16)
+            draw.arc(
+                [in_pad, in_pad, size - in_pad - 1, size - in_pad - 1],
+                start=-90, end=-90 + int(360 * codex_percent / 100),
+                fill=_arc_color(codex_percent),
+                width=in_w,
             )
 
         text  = f"{percent}%"
@@ -146,4 +160,6 @@ if __name__ == "__main__":
     preview.save("icon_preview_13.png")
     preview2 = make_tray_icon(128, 78)
     preview2.save("icon_preview_78.png")
-    print("Önizlemeler: icon_preview_13.png / icon_preview_78.png")
+    preview3 = make_tray_icon(128, 42, codex_percent=91)
+    preview3.save("icon_preview_dual.png")
+    print("Önizlemeler: icon_preview_13.png / icon_preview_78.png / icon_preview_dual.png")
