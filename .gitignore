@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 *.pyo
+tests/tmp*/
 
 # Config (contains session key - never commit)
 ~/.claude-monitor/

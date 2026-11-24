@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Claude Monitor - Simge üretici
-icon.ico (çoklu boyut) + tray preview oluşturur.
+icon.ico (çoklu boyut) + 4 çeyrek yaylı tepsi simgesi oluşturur.
 """
 
 import math
@@ -11,15 +11,25 @@ CLAUDE_PURPLE   = (124, 58,  237)   # #7C3AED
 CLAUDE_LIGHT    = (167, 139, 250)   # #A78BFA
 CLAUDE_DARK     = (46,  16,  101)   # #2E1065
 CLAUDE_BG       = (30,  10,  60)    # koyu arka plan
+TRACK_COLOR     = (72,  56,  108, 150)
 WHITE           = (255, 255, 255)
 TRANSPARENT     = (0,   0,   0,   0)
+
+# Dış halkadaki 4 eşit çeyrek yay (saat 12 = -90°, saat yönünde artar):
+# Sağ-üst: Claude, Sağ-alt: Codex, Sol-alt: OpenCode Go, Sol-üst: Antigravity
+_QUADRANTS = (
+    (-85, -5),   # Claude
+    (5, 85),     # Codex
+    (95, 175),   # OpenCode Go
+    (185, 265),  # Antigravity
+)
 
 
 def draw_base(draw: ImageDraw.ImageDraw, size: int):
     """Claude logosunu çizer: koyu daire + parlak C harfi."""
     s = size
 
-    # Dış daire — koyu mor dolgu
+    # Dış daire - koyu mor dolgu
     draw.ellipse([0, 0, s - 1, s - 1], fill=(*CLAUDE_BG, 255))
 
     # İnce parlak halka
@@ -30,14 +40,13 @@ def draw_base(draw: ImageDraw.ImageDraw, size: int):
         width=max(1, ring),
     )
 
-    # "C" harfi — arc ile
+    # "C" harfi - arc ile
     pad   = int(s * 0.18)
     arc_w = max(2, int(s * 0.14))
-    # Tam daire çiz, sonra üstüne arka plan rengiyle sağ dilimi kapat
     cx, cy = s / 2, s / 2
     r = s / 2 - pad
 
-    # Yay: -150° → +150° (sağ taraf açık → C şekli)
+    # Yay: 40° -> 320° (sağ taraf açık -> C şekli)
     draw.arc(
         [pad, pad, s - pad - 1, s - pad - 1],
         start=40, end=320,
@@ -45,7 +54,7 @@ def draw_base(draw: ImageDraw.ImageDraw, size: int):
         width=arc_w,
     )
 
-    # Küçük nokta — sağ alt (AI spark)
+    # Küçük nokta - sağ alt (AI spark)
     dot_r = max(2, int(s * 0.09))
     dot_x = int(cx + r * math.cos(math.radians(-30)))
     dot_y = int(cy + r * math.sin(math.radians(-30)))
@@ -62,77 +71,79 @@ def make_base_icon(size: int) -> Image.Image:
     return img
 
 
-def _arc_color(percent: int):
+def _arc_color(percent: float):
     if percent < 50:
-        return (100, 220, 120, 220)
+        return (100, 220, 120, 235)
     if percent < 75:
-        return (255, 170, 50, 220)
-    return (240, 70, 70, 220)
+        return (255, 170, 50, 235)
+    return (240, 70, 70, 235)
+
+
+def _draw_quadrant(draw: ImageDraw.ImageDraw, bbox, start_deg: int, end_deg: int,
+                   width: int, percent, track_color=TRACK_COLOR):
+    """Tek bir çeyrek yayın arka izini ve dolu kullanım kısmını çizer."""
+    draw.arc(bbox, start=start_deg, end=end_deg, fill=track_color, width=width)
+    if percent is None or percent <= 0:
+        return
+    clamped = max(0.0, min(100.0, float(percent)))
+    span = end_deg - start_deg
+    fill_end = start_deg + max(2, int(round(span * clamped / 100.0)))
+    draw.arc(bbox, start=start_deg, end=min(end_deg, fill_end),
+             fill=_arc_color(clamped), width=width)
 
 
 def make_tray_icon(size: int, percent: int, error: bool = False, no_key: bool = False,
-                   codex_percent=None) -> Image.Image:
-    """Tepsi için — base + yüzde metni + kullanım yayı.
-    codex_percent verilirse dış yay Claude, hemen içindeki ince yay Codex olur."""
+                   codex_percent=None, opencode_percent=None,
+                   antigravity_percent=None) -> Image.Image:
+    """Tepsi simgesi: koyu daire + dış halkada 4 eşit çeyrek yay + ortada Claude yüzdesi.
+
+    Çeyrekler saat yönünde:
+      Sağ-üst: Claude | Sağ-alt: Codex | Sol-alt: OpenCode Go | Sol-üst: Antigravity
+    """
     img  = Image.new("RGBA", (size, size), TRANSPARENT)
     draw = ImageDraw.Draw(img)
 
+    # Koyu arka plan dairesi (ortadaki metnin yüksek kontrastlı kalması için)
+    draw.ellipse([0, 0, size - 1, size - 1], fill=(*CLAUDE_BG, 255))
+
+    arc_pad = max(1, size // 24)
+    arc_w   = max(3, size // 9)
+    bbox    = [arc_pad, arc_pad, size - arc_pad - 1, size - arc_pad - 1]
+
     if no_key:
-        draw.ellipse([0, 0, size - 1, size - 1], fill=(*CLAUDE_BG, 255))
-        ring = max(1, size // 20)
-        draw.ellipse([ring, ring, size - ring - 1, size - ring - 1],
-                     outline=(100, 80, 140, 160), width=max(1, ring))
-        text, color = "KEY", (120, 100, 170)
+        claude_pct = None
+        claude_track = (100, 80, 140, 160)
+        text, color = "KEY", (160, 140, 210)
     elif error:
-        draw.ellipse([0, 0, size - 1, size - 1], fill=(*CLAUDE_BG, 255))
-        ring = max(1, size // 20)
-        draw.ellipse([ring, ring, size - ring - 1, size - ring - 1],
-                     outline=(180, 60, 60, 180), width=max(1, ring))
-        text, color = "ERR", (200, 80, 80)
+        claude_pct = None
+        claude_track = (180, 60, 60, 190)
+        text, color = "ERR", (230, 95, 95)
     else:
-        draw_base(draw, size)
+        claude_pct = percent
+        claude_track = TRACK_COLOR
+        text, color = f"{int(round(percent))}%", WHITE
 
-        # Kullanım yayı (dış kenar üstüne) — Claude
-        arc_pad = max(1, size // 16)
-        arc_w   = max(2, size // 10)
-        if percent > 0:
-            draw.arc(
-                [arc_pad, arc_pad, size - arc_pad - 1, size - arc_pad - 1],
-                start=-90, end=-90 + int(360 * percent / 100),
-                fill=_arc_color(percent),
-                width=arc_w,
-            )
+    values = (claude_pct, codex_percent, opencode_percent, antigravity_percent)
+    tracks = (claude_track, TRACK_COLOR, TRACK_COLOR, TRACK_COLOR)
+    for (start_deg, end_deg), val, trk in zip(_QUADRANTS, values, tracks):
+        _draw_quadrant(draw, bbox, start_deg, end_deg, arc_w, val, track_color=trk)
 
-        # İç yay — Codex (daha ince, hemen içeride)
-        if codex_percent is not None and codex_percent > 0:
-            in_pad = arc_pad + arc_w + max(1, size // 32)
-            in_w   = max(1, size // 16)
-            draw.arc(
-                [in_pad, in_pad, size - in_pad - 1, size - in_pad - 1],
-                start=-90, end=-90 + int(360 * codex_percent / 100),
-                fill=_arc_color(codex_percent),
-                width=in_w,
-            )
-
-        text  = f"{percent}%"
-        color = WHITE
-
-    # Yüzde metni
-    font_size = int(size * (0.28 if len(text) <= 3 else 0.24))
+    # Ortada yüzde / durum metni (yaylarla çakışmaz)
+    font_size = int(size * (0.29 if len(text) <= 3 else 0.23))
     font = None
     for fname in ["arialbd.ttf", "arial.ttf", "segoeui.ttf"]:
         try:
             font = ImageFont.truetype(f"C:/Windows/Fonts/{fname}", font_size)
             break
-        except:
+        except Exception:
             continue
     if font is None:
         font = ImageFont.load_default()
 
-    bbox = draw.textbbox((0, 0), text, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    x = (size - tw) // 2 - bbox[0]
-    y = (size - th) // 2 - bbox[1]
+    bbox_txt = draw.textbbox((0, 0), text, font=font)
+    tw, th = bbox_txt[2] - bbox_txt[0], bbox_txt[3] - bbox_txt[1]
+    x = (size - tw) // 2 - bbox_txt[0]
+    y = (size - th) // 2 - bbox_txt[1]
     draw.text((x, y), text, fill=(*color, 255), font=font)
 
     return img
@@ -154,12 +165,6 @@ def generate_ico(path: str = "icon.ico"):
 
 if __name__ == "__main__":
     generate_ico()
-
-    # Önizleme
-    preview = make_tray_icon(128, 13)
-    preview.save("icon_preview_13.png")
-    preview2 = make_tray_icon(128, 78)
-    preview2.save("icon_preview_78.png")
-    preview3 = make_tray_icon(128, 42, codex_percent=91)
-    preview3.save("icon_preview_dual.png")
-    print("Önizlemeler: icon_preview_13.png / icon_preview_78.png / icon_preview_dual.png")
+    preview = make_tray_icon(128, 13, codex_percent=42, opencode_percent=65, antigravity_percent=85)
+    preview.save("icon_preview_dual.png")
+    print("Önizleme: icon_preview_dual.png")
