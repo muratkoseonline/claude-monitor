@@ -1,6 +1,8 @@
-# Claude Monitor
+# Claude Monitor (v1.4.0)
 
 Windows 11 system tray app that tracks your [Claude.ai](https://claude.ai), [Codex](https://chatgpt.com/codex) (ChatGPT), [OpenCode Go](https://opencode.ai/docs/go/), and [Antigravity](https://antigravity.google) (Google) usage quotas in real time.
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ![Claude Monitor detail window](screenshot.png)
 
@@ -22,6 +24,8 @@ Windows 11 system tray app that tracks your [Claude.ai](https://claude.ai), [Cod
 - Python 3.10+
 - Claude.ai account (Free, Pro, or Max plan)
 - Optional: Codex CLI or Codex app logged in with a ChatGPT account (for Codex quota)
+- Optional: OpenCode logged in with an OpenCode Go Account (for OpenCode Go 5-hour, weekly, and monthly quotas)
+- Optional: Antigravity IDE / desktop app running locally (for Antigravity 5-hour, weekly, plan, and credit quotas)
 
 ## Installation
 

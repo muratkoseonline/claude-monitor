@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-Claude Usage Monitor v1.4
+Claude Usage Monitor v1.4.0
 Windows 11 System Tray - Claude + Codex + OpenCode Go + Antigravity quota tracker
 """
+
+__version__ = "1.4.0"
 
 import sys
 import os
